@@ -25,11 +25,11 @@ def initialize_weights(m):
 
 
 model = Transformer(src_pad_idx=src_pad_idx,
-                    trg_pad_idx=trg_pad_idx,
-                    trg_sos_idx=trg_sos_idx,
+                    trg_pad_idx=tgt_pad_idx,
+                    trg_sos_idx=tgt_sos_idx,
                     d_model=d_model,
-                    enc_voc_size=enc_voc_size,
-                    dec_voc_size=dec_voc_size,
+                    enc_voc_size=len(src_vocab),
+                    dec_voc_size=len(tgt_vocab),
                     max_len=max_len,
                     ffn_hidden=ffn_hidden,
                     n_head=n_heads,
@@ -56,19 +56,25 @@ def train(model, dataloader, optimizer, criterion, clip):
     model.train()
     epoch_loss = 0
     for i, (src, trg) in enumerate(dataloader):
-        print(src.shape, trg.shape)
+        src, trg = src.to(device), trg.to(device)
         optimizer.zero_grad()
         output = model(src, trg[:, :-1])
         output_reshape = output.contiguous().view(-1, output.shape[-1])
-        trg = trg[:, 1:].contiguous().view(-1)
 
-        loss = criterion(output_reshape, trg)
+        loss = criterion(output_reshape, trg[:, 1:].contiguous().view(-1))
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
         optimizer.step()
 
         epoch_loss += loss.item()
         print('step :', round((i / len(dataloader)) * 100, 2), '% , loss :', loss.item())
+        
+        # 打印输出的句子
+        target_words = idx_to_word(trg[0], tgt_vocab)
+        output_words = output[0].max(dim=1)[1]
+        output_words = idx_to_word(output_words, tgt_vocab)
+        print('\ttarget :', target_words)
+        print('\toutput :', output_words)
 
     return epoch_loss / len(dataloader)
 
@@ -78,22 +84,21 @@ def evaluate(model, iterator, criterion):
     epoch_loss = 0
     batch_bleu = []
     with torch.no_grad():
-        for i, batch in enumerate(iterator):
-            src = batch.src
-            trg = batch.trg
+        for i, (src, trg) in enumerate(iterator):
+            src, trg = src.to(device), trg.to(device)
             output = model(src, trg[:, :-1])
             output_reshape = output.contiguous().view(-1, output.shape[-1])
-            trg = trg[:, 1:].contiguous().view(-1)
+            trg_reshape = trg[:, 1:].contiguous().view(-1)
 
-            loss = criterion(output_reshape, trg)
+            loss = criterion(output_reshape, trg_reshape)
             epoch_loss += loss.item()
 
             total_bleu = []
             for j in range(batch_size):
                 try:
-                    trg_words = idx_to_word(batch.trg[j], loader.target.vocab)
+                    trg_words = idx_to_word(trg[j], tgt_vocab)
                     output_words = output[j].max(dim=1)[1]
-                    output_words = idx_to_word(output_words, loader.target.vocab)
+                    output_words = idx_to_word(output_words, tgt_vocab)
                     bleu = get_bleu(hypotheses=output_words.split(), reference=trg_words.split())
                     total_bleu.append(bleu)
                 except:
@@ -111,7 +116,7 @@ def run(total_epoch, best_loss):
     for step in range(total_epoch):
         start_time = time.time()
         train_loss = train(model, train_dataloader, optimizer, criterion, clip)
-        valid_loss, bleu = evaluate(model, valid_iter, criterion)
+        valid_loss, bleu = evaluate(model, valid_dataloader, criterion)
         end_time = time.time()
 
         if step > warmup:

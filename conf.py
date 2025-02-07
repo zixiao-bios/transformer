@@ -5,12 +5,16 @@
 """
 import torch
 
-# GPU device setting
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# device = torch.device('cpu')
+# device = torch.device('cuda')
+device = torch.device('mps')
 
-# model parameter setting
+# data parameter setting
 batch_size = 128
-max_len = 256
+
+# 序列最大长度
+max_len = 50
+
 d_model = 512
 n_layers = 6
 n_heads = 8

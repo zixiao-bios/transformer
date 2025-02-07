@@ -1,46 +1,56 @@
+# Python
+import torch
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
 from torchtext.datasets import Multi30k
-from torch.utils.data import DataLoader
-from torch.nn.utils.rnn import pad_sequence
-import torch
+from torch.utils.data import DataLoader, Dataset
 
-class CustomDataLoader:
-    def __init__(self, src_lang, tgt_lang, src_tokenize, tgt_tokenize, min_freq=2):
-        # 设置分词器
+class CustomDataset(Dataset):
+    def __init__(self, raw_data, src_tokenize, tgt_tokenize, src_pad_size, target_pad_size, min_freq=2):
+        """
+        Args:
+            raw_data: 文本对列表，每个元素为 (src_text, tgt_text)
+            src_tokenize: 源语言分词器
+            tgt_tokenize: 目标语言分词器
+            min_freq: 最小词频
+            src_pad_size: 指定源序列填充的固定长度
+            target_pad_size: 指定目标序列填充的固定长度
+        """
+        self.raw_data = list(raw_data)
         self.src_tokenize = src_tokenize
         self.tgt_tokenize = tgt_tokenize
+        self.min_freq = min_freq
+        self.src_pad_size = src_pad_size
+        self.tgt_pad_size = target_pad_size
         
-        # 特殊 token
-        self.init_token = '<sos>'
+        # 特殊 token 定义
+        self.sos_token = '<sos>'
         self.eos_token = '<eos>'
         self.pad_token = '<pad>'
         self.unk_token = '<unk>'
         
-        # 源语言和目标语言
-        self.src_lang = src_lang
-        self.tgt_lang = tgt_lang
+        # 构建词汇表
+        self.src_vocab, self.tgt_vocab = self.build_vocab(self.raw_data)
         
-        # 词汇表参数
-        self.min_freq = min_freq
-        print('Initializing data loader...')
-
+        print(f'完成数据集初始化，样本数量: {len(self.raw_data)}, 源语言词汇表大小: {len(self.src_vocab)}, 目标语言词汇表大小: {len(self.tgt_vocab)}')
+    
     def _tokenize(self, data_iter, tokenizer, idx, add_special=True):
-        """分词函数，返回分词后的结果，可选择是否添加特殊 token
-        Args:
-            data_iter: 数据迭代器
-            tokenizer: 分词器
-            idx: 索引，用于在迭代器中选择源语言或目标语言
-            add_special: 是否添加特殊 token
-        """
+        """分词函数，返回分词后的结果，可选择是否添加特殊 token"""
         for data in data_iter:
             tokens = tokenizer(data[idx])
             if add_special:
-                yield [self.init_token] + tokens + [self.eos_token]
+                yield [self.sos_token] + tokens + [self.eos_token]
             else:
                 yield tokens
-
-    def build_vocab(self, train_iter):
+    
+    def build_vocab(self, data):
+        """
+        利用 build_vocab_from_iterator 构建源和目标语言词汇表
+        Args:
+            data: 原始数据列表，每个元素为 (src_text, tgt_text)
+        Returns:
+            src_vocab, tgt_vocab
+        """
         # 构建源语言词汇表
         # 使用 torchtext 的 build_vocab_from_iterator 函数构建源语言的词汇表
         # 参数解释：
@@ -48,9 +58,9 @@ class CustomDataLoader:
         #   - min_freq 用于设置词汇的最小词频，词频低于该值的词将不会进入词汇表
         #   - specials 列表定义了一些特殊的 token，例如填充符 (<pad>)、未知词 (<unk>)、句子开始 (<sos>) 和句子结束 (<eos>)
         src_vocab = build_vocab_from_iterator(
-            self._tokenize(train_iter, self.src_tokenize, idx=0),
+            self._tokenize(data, self.src_tokenize, idx=0),
             min_freq=self.min_freq,
-            specials=[self.pad_token, self.unk_token, self.init_token, self.eos_token]
+            specials=[self.pad_token, self.unk_token, self.sos_token, self.eos_token]
         )
         
         # 设置默认索引：当词汇表中不存在某个 token 时，返回默认索引
@@ -58,99 +68,73 @@ class CustomDataLoader:
         src_vocab.set_default_index(src_vocab[self.unk_token])
         print(f'Source vocab size: {len(src_vocab)}')
         
-        # 构建目标语言词汇表
         tgt_vocab = build_vocab_from_iterator(
-            self._tokenize(train_iter, self.tgt_tokenize, idx=1),
+            self._tokenize(data, self.tgt_tokenize, idx=1),
             min_freq=self.min_freq,
-            specials=[self.pad_token, self.unk_token, self.init_token, self.eos_token]
+            specials=[self.pad_token, self.unk_token, self.sos_token, self.eos_token]
         )
         tgt_vocab.set_default_index(tgt_vocab[self.unk_token])
         print(f'Target vocab size: {len(tgt_vocab)}')
         
-        self.src_vocab = src_vocab
-        self.tgt_vocab = tgt_vocab
         return src_vocab, tgt_vocab
-
-    def _sequential_transform(self, tokenizer, vocab):
-        """将文本转换为数值序列的函数"""
-        def transform(text):
-            # 将句子分词为token，并在首尾添加特殊 token
-            tokens = [self.init_token] + tokenizer(text) + [self.eos_token]
-            
-            # 将 token 转换为索引
-            return vocab(tokens)
+    
+    def convert_text_to_indices(self, text, tokenize, vocab, pad_size):
+        """将文本转换为索引序列，包含特殊 token，并进行填充或截断，截断时保留末尾的 <eos>"""
         
-        return transform
-
-    def get_transform(self):
-        """获取源语言和目标语言的转换函数"""
-        src_transform = self._sequential_transform(self.src_tokenize, self.src_vocab)
-        tgt_transform = self._sequential_transform(self.tgt_tokenize, self.tgt_vocab)
-        return src_transform, tgt_transform
-
-    def collate_fn(self, batch, device=torch.device('cpu')):
-        """批处理函数，处理填充和维度转换"""
-        src_batch, tgt_batch = [], []
-        for sample in batch:
-            src = torch.tensor(sample[0], dtype=torch.long)
-            tgt = torch.tensor(sample[1], dtype=torch.long)
-            src_batch.append(src)
-            tgt_batch.append(tgt)
+        # 讲文本分词为 token，并添加特殊 token
+        tokens = [self.sos_token] + tokenize(text) + [self.eos_token]
         
-        # 填充序列
-        src_batch = pad_sequence(src_batch, padding_value=self.src_vocab[self.pad_token])
-        tgt_batch = pad_sequence(tgt_batch, padding_value=self.tgt_vocab[self.pad_token])
+        if len(tokens) < pad_size:
+            # 如果长度不足，则填充到指定长度
+            tokens = tokens + [self.pad_token] * (pad_size - len(tokens))
+        elif len(tokens) > pad_size:
+            # 如果长度超过，则截断到指定长度
+            # 保证截断后最后一个 token 为 <eos>
+            tokens = tokens[:pad_size-1] + [self.eos_token]
         
-        return src_batch.to(device), tgt_batch.to(device)
-
-    def make_iter(self, dataset, batch_size=128, device=torch.device('cpu')):
-        """创建数据加载器"""
-        return DataLoader(
-            dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            collate_fn=lambda batch: self.collate_fn(batch, device)
-        )
+        # 将 token 转换为索引
+        return vocab(tokens)
+    
+    def __len__(self):
+        return len(self.raw_data)
+    
+    def __getitem__(self, idx):
+        """获取转换后的源和目标索引序列，并对序列进行填充（或截断）到固定长度"""
+        src_text, tgt_text = self.raw_data[idx]
+        src_indices = self.convert_text_to_indices(src_text, self.src_tokenize, self.src_vocab, self.src_pad_size)
+        tgt_indices = self.convert_text_to_indices(tgt_text, self.tgt_tokenize, self.tgt_vocab, self.tgt_pad_size)
+        return torch.tensor(src_indices, dtype=torch.long), torch.tensor(tgt_indices, dtype=torch.long)
 
 # 使用示例
 if __name__ == '__main__':
     # 加载数据集
-    train_iter = Multi30k(split='train', language_pair=('de', 'en'))
-    valid_iter = Multi30k(split='valid', language_pair=('de', 'en'))
+    train_raw = Multi30k(split='train', language_pair=('de', 'en'))
     
     # 设置分词器
     tokenize_de = get_tokenizer('spacy', language='de_core_news_sm')
     tokenize_en = get_tokenizer('spacy', language='en_core_web_sm')
     
-    # 查看数据集
-    for de, en in train_iter:
-        print(f"German: {de}")
-        print(f"English: {en}")
-        print(f'German tokens: {tokenize_de(de)}')
-        print(f'English tokens: {tokenize_en(en)}')
+    # 查看数据集示例
+    for de, en in train_raw:
+        print(f"源语言: {de}")
+        print(f"目标语言: {en}")
+        print(f'源语言 tokens: {tokenize_de(de)}')
+        print(f'目标语言 tokens: {tokenize_en(en)}')
         break
     
-    # 初始化数据加载器
-    loader = CustomDataLoader(src_lang='de', tgt_lang='en', src_tokenize=tokenize_de, tgt_tokenize=tokenize_en, min_freq=2)
+    # 初始化自定义数据集，目标序列填充大小为必填参数（例如固定填充到20），源序列可选择填充
+    train_dataset = CustomDataset(train_raw, src_tokenize=tokenize_de, tgt_tokenize=tokenize_en,
+                                  min_freq=2, src_pad_size=30, target_pad_size=30)
     
-    # 构建词汇表（需要完整遍历训练集）
-    src_vocab, tgt_vocab = loader.build_vocab(train_iter)
-    print('一些token对应的索引：', tgt_vocab['hello'], tgt_vocab['<eos>'])
-    
-    # 获取转换函数
-    src_transform, tgt_transform = loader.get_transform()
-    print('句子转换为索引序列：', tgt_transform('hello world!'))
-    
-    # 重新加载带转换的数据集（需要将原始文本转换为索引）
-    train_dataset = [(src_transform(de), tgt_transform(en)) for de, en in Multi30k(split='train', language_pair=('de', 'en'))]
-    valid_dataset = [(src_transform(de), tgt_transform(en)) for de, en in Multi30k(split='valid', language_pair=('de', 'en'))]
-    
-    # 创建数据加载器
-    train_dataloader = loader.make_iter(train_dataset, batch_size=128, device=torch.device('mps'))
-    valid_dataloader = loader.make_iter(valid_dataset, batch_size=128, device=torch.device('mps'))
+    # 创建 DataLoader，直接传入自定义数据集
+    batch_size = 128
+    device = torch.device('mps')
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     
     # 测试一个批次
     for src, tgt in train_dataloader:
         print(f"Source shape: {src.shape}")
         print(f"Target shape: {tgt.shape}")
+        print(f"Source tensor: {src[0]}")
+        print(f"Target tensor: {tgt[0]}")
         break
