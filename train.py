@@ -131,17 +131,17 @@ def run(total_epoch, best_loss):
             best_loss = valid_loss
             torch.save(model.state_dict(), 'saved/model-{0}.pt'.format(valid_loss))
 
-        f = open('result/train_loss.txt', 'w')
-        f.write(str(train_losses))
-        f.close()
+        # f = open('result/train_loss.txt', 'w')
+        # f.write(str(train_losses))
+        # f.close()
 
-        f = open('result/bleu.txt', 'w')
-        f.write(str(bleus))
-        f.close()
+        # f = open('result/bleu.txt', 'w')
+        # f.write(str(bleus))
+        # f.close()
 
-        f = open('result/test_loss.txt', 'w')
-        f.write(str(test_losses))
-        f.close()
+        # f = open('result/test_loss.txt', 'w')
+        # f.write(str(test_losses))
+        # f.close()
 
         print(f'Epoch: {step + 1} | Time: {epoch_mins}m {epoch_secs}s')
         print(f'\tTrain Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}')
