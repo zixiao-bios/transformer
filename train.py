@@ -52,13 +52,11 @@ scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer,
 criterion = nn.CrossEntropyLoss(ignore_index=src_pad_idx)
 
 
-def train(model, iterator, optimizer, criterion, clip):
+def train(model, dataloader, optimizer, criterion, clip):
     model.train()
     epoch_loss = 0
-    for i, batch in enumerate(iterator):
-        src = batch.src
-        trg = batch.trg
-
+    for i, (src, trg) in enumerate(dataloader):
+        print(src.shape, trg.shape)
         optimizer.zero_grad()
         output = model(src, trg[:, :-1])
         output_reshape = output.contiguous().view(-1, output.shape[-1])
@@ -70,9 +68,9 @@ def train(model, iterator, optimizer, criterion, clip):
         optimizer.step()
 
         epoch_loss += loss.item()
-        print('step :', round((i / len(iterator)) * 100, 2), '% , loss :', loss.item())
+        print('step :', round((i / len(dataloader)) * 100, 2), '% , loss :', loss.item())
 
-    return epoch_loss / len(iterator)
+    return epoch_loss / len(dataloader)
 
 
 def evaluate(model, iterator, criterion):
@@ -112,7 +110,7 @@ def run(total_epoch, best_loss):
     train_losses, test_losses, bleus = [], [], []
     for step in range(total_epoch):
         start_time = time.time()
-        train_loss = train(model, train_iter, optimizer, criterion, clip)
+        train_loss = train(model, train_dataloader, optimizer, criterion, clip)
         valid_loss, bleu = evaluate(model, valid_iter, criterion)
         end_time = time.time()
 

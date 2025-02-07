@@ -4,25 +4,38 @@
 @homepage : https://github.com/gusdnd852
 """
 from conf import *
-from util.data_loader import DataLoader
+from util.data_loader import CustomDataLoader
 from util.tokenizer import Tokenizer
+from torchtext.datasets import Multi30k
 
 tokenizer = Tokenizer()
-loader = DataLoader(ext=('.en', '.de'),
-                    tokenize_en=tokenizer.tokenize_en,
-                    tokenize_de=tokenizer.tokenize_de,
+loader = CustomDataLoader(ext=('.en', '.de'),
                     init_token='<sos>',
                     eos_token='<eos>')
 
-train, valid, test = loader.make_dataset()
-loader.build_vocab(train_data=train, min_freq=2)
-train_iter, valid_iter, test_iter = loader.make_iter(train, valid, test,
-                                                     batch_size=batch_size,
-                                                     device=device)
+# 加载数据集：注意，Multi30k返回的是迭代器，需重新实例化
+train_iter = Multi30k(split='train', language_pair=('en', 'de'))
+valid_iter = Multi30k(split='valid', language_pair=('en', 'de'))
+test_iter = Multi30k(split='test', language_pair=('en', 'de'))
 
-src_pad_idx = loader.source.vocab.stoi['<pad>']
-trg_pad_idx = loader.target.vocab.stoi['<pad>']
-trg_sos_idx = loader.target.vocab.stoi['<sos>']
+# 构建词汇表（只需用训练集）
+src_vocab, tgt_vocab = loader.build_vocab(train_iter)
 
-enc_voc_size = len(loader.source.vocab)
-dec_voc_size = len(loader.target.vocab)
+# 获取转换函数
+src_transform, tgt_transform = loader.get_transform()
+
+# 构建索引化后的数据集
+train_dataset = [(src_transform(en), tgt_transform(de)) for en, de in Multi30k(split='train', language_pair=('en', 'de'))]
+valid_dataset = [(src_transform(en), tgt_transform(de)) for en, de in Multi30k(split='valid', language_pair=('en', 'de'))]
+
+# 创建数据加载器
+train_dataloader = loader.make_iter(train_dataset, batch_size=batch_size, device=device)
+valid_dataloader = loader.make_iter(valid_dataset, batch_size=batch_size, device=device)
+
+# 获取特殊符号对应的索引
+src_pad_idx = loader.src_vocab[loader.pad_token]
+trg_pad_idx = loader.tgt_vocab[loader.pad_token]
+trg_sos_idx = loader.tgt_vocab[loader.init_token]
+
+enc_voc_size = len(loader.src_vocab)
+dec_voc_size = len(loader.tgt_vocab)
